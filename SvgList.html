@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html>
+
+	<head>
+		<meta charset="UTF-8">
+		<title>图形列表</title>
+		<link rel="stylesheet" type="text/css" href="../../resources/css/Styles/themes/gray/easyui.css" />
+		<link rel="stylesheet" type="text/css" href="../../resources/css/Styles/themes/icon.css" />
+		<link rel="stylesheet" type="text/css" href="../../resources/css/Styles/frame.css" />
+
+		<script src="../../../resources/jquery/jquery.min.js" type="text/javascript" charset="utf-8"></script>
+		<script src="../../../resources/jquery/jquery.easyui.min.js" type="text/javascript" charset="utf-8"></script>
+		<script src="../../../resources/jquery/easyui-lang-zh_CN.js" type="text/javascript" charset="utf-8"></script>
+		<script src="../../../resources/jquery/tree.js" type="text/javascript" charset="utf-8"></script>
+		<script src="../../../resources/jquery/common.js" type="text/javascript" charset="utf-8"></script>
+		<script src="../../../resources/jquery/cookie.js" type="text/javascript" charset="utf-8"></script>
+		<script type="text/javascript">
+			//			var varDic = {};
+			//			var lastSvg;
+
+			$(document).ready(function() {
+				TreeHelper.showTree(false, '图形列表');
+				//				setInterval(function() {
+				//					SendData(false);
+				//				}, 3000);
+			});
+
+			function onLeafSelect(node) {
+				var svgFile = node.id;
+				if(isNullOrEmpty(svgFile)) return;
+				$.post('/pcm/svg!get.do', {
+					pageId: svgFile
+				}, function(result) {
+					if(result.success && !isNullOrEmpty(result.data)) {
+						varDic = [];
+						var url = '/jump.do?url=/SvgContainer.html?url={0}'.format(result.data);
+						$('#svgframe').attr("src", url);
+						//						$('#svgframe').attr("src", result.data);
+						//						setTimeout(function() {
+						//							SendData(true);
+						//						}, 100);
+					}
+				});
+			}
+
+			//			function SendData(isNew) {
+			//				try {
+			//					var currSvg = $('#svgframe').attr("src");
+			//					if(isNullOrEmpty(currSvg))
+			//						return;
+			//					var ids = $("#svgframe").contents().find("svg text[DeviceNo!=\"\"]").map(function() {
+			//						return this.getAttribute("DeviceNo")
+			//					}).get().join(";");
+			//					if(!isNullOrEmpty(ids))
+			//						ids += ";";
+			//					ids = ids + $("#svgframe").contents().find("svg use[DeviceNo!=\"\"]").map(function() {
+			//						return this.getAttribute("DeviceNo")
+			//					}).get().join(";");
+			//					if(isNullOrEmpty(ids))
+			//						return;
+			//					var data = "findRtVarData;" + ids;
+			//					$.post("/pcm/WebSocket!send.do", {
+			//						'data': data,
+			//						'link': Cookies.get('socketLink')
+			//					}, function(result) {
+			//						if(result.success) {
+			//							var datas = result.data.split(';');
+			//							$.each(datas, function(index, data) {
+			//								var name = data.split(':')[0];
+			//								var value = data.split(':')[1];
+			//								var isUpdate = true;
+			//								if(isNullOrEmpty(varDic[name])) {
+			//									varDic[name] = value;
+			//								} else {
+			//									if(varDic[name] == value)
+			//										isUpdate = false;
+			//									else
+			//										varDic[name] = value;
+			//								}
+			//								if(isUpdate || isNew) {
+			//									updateSvgElement($("#svgframe"), name, value);
+			//								}
+			//							});
+			//						} else {
+			//							console.error(result.msg);
+			//						}
+			//					});
+			//				} catch(e) {
+			//					console.error(e.message);
+			//				}
+			//			}
+
+			//更新svg图元
+			//			function updateSvgElement(svgFrame, name, value) {
+			//				var list = svgFrame.contents().find("svg text[DeviceNo$=\"" + name + "\"]");
+			//				if(list.length > 0) {
+			//					list.each(function() {
+			//						var fm = this.getAttribute("format");
+			//						if(isNullOrEmpty(fm)) fm = "#0.00";
+			//						value = parseFloat(value);
+			//						if(fm.indexOf(".") != -1) {
+			//							var len = fm.split('.')[1].length;
+			//							value = value.toFixed(len);
+			//						}
+			//						list.text(value == "NaN" ? "--" : value);
+			//					});
+			//				}
+			//				list = svgFrame.contents().find("svg use[DeviceNo$=\"" + name + "\"]");
+			//				if(list.length > 0) {
+			//					list.each(function() {
+			//						var link = this.getAttribute("xlink:href");
+			//						var state = this.getAttribute("state");
+			//						var desState = value.substring(0, value.lastIndexOf('.'));
+			//						if(desState != '0') desState = '1';
+			//						if(state != desState) {
+			//							if(state != 0) {
+			//								link = link.substring(0, link.lastIndexOf(state));
+			//							}
+			//							if(desState != 0) {
+			//								link = link + desState;
+			//							}
+			//							this.setAttribute("xlink:href", link);
+			//							this.setAttribute("state", desState);
+			//						}
+			//					});
+			//				}
+			//			}
+
+			//			function getSvgSize(path) {
+			//				return parent.getSvgSize(path);
+			//			}
+
+			//			function getSvgPath(pageId, showMsg) {
+			//				return parent.getSvgPath(pageId, showMsg);
+			//			}
+
+			//			function open(win, isNew) {
+			//				parent.open(win, isNew);
+			//			}
+
+			//			function openWithDev(win, devName, isNew) {
+			//				parent.openWithDev(win, devName, isNew);
+			//			}
+		</script>
+	</head>
+
+	<body>
+		<div class="easyui-layout" data-options="fit:true">
+			<div class="leftpane" data-options="region:'west',split:true">
+				<ul id="tree"></ul>
+			</div>
+			<div class="centerpane" data-options="region:'center'">
+				<iframe id="svgframe" scrolling="auto" frameborder="0" src="" style="width:100%;height:100%;"></iframe>
+			</div>
+		</div>
+	</body>
+
+</html>
