@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html>
+
+	<head>
+		<meta charset="UTF-8">
+		<title>单位概况</title>
+		<link rel="stylesheet" type="text/css" href="../../resources/css/Styles/themes/gray/easyui.css" />
+		<link rel="stylesheet" type="text/css" href="../../resources/css/Styles/themes/icon.css" />
+		<link rel="stylesheet" type="text/css" href="../../resources/css/Styles/frame.css" />
+		<link rel="stylesheet" type="text/css" href="../../resources/css/Styles/UsePowerUnit.css" />
+
+		<script src="../../resources/jquery/jquery.min.js" type="text/javascript" charset="utf-8"></script>
+		<script src="../../resources/jquery/jquery.easyui.min.js" type="text/javascript" charset="utf-8"></script>
+		<script src="../../resources/jquery/easyui-lang-zh_CN.js" type="text/javascript" charset="utf-8"></script>
+		<script src="../../resources/jquery/tree.js" type="text/javascript" charset="utf-8"></script>
+		<script src="../../resources/jquery/common.js" type="text/javascript" charset="utf-8"></script>
+		<script src="../../resources/jquery/cookie.js" type="text/javascript" charset="utf-8"></script>
+		<script src="../../resources/jquery/highcharts.js" type="text/javascript" charset="utf-8"></script>
+		<script src="../../resources/jquery/HighChart.js" type="text/javascript" charset="utf-8"></script>
+		<script src="../../resources/jquery/highcharts-3d.js" type="text/javascript" charset="utf-8"></script>
+		<script type="text/javascript">
+			var loadcapacity;
+			var lastLoadPercent;
+			var lastMaxDayLoad;
+			var lastMaxMonLoad;
+			var lastMonthMaxDemand;
+
+			$(document).ready(function() {
+				HighChart.setOptions();
+				Highcharts.setOptions({
+					colors: ['#00BAFF', '#FF8A00', '#1FBE44', '#DDDF00', '#24CBE5', '#64E572', '#FF9655', '#FFF263', '#6AF9C4']
+				});
+				//加载单位信息
+				loadUnitInfo();
+
+				//5秒钟刷新一次实时负荷
+				updateRtLoad();
+				setInterval(function() {
+					updateRtLoad();
+				}, 5000);
+
+				//5分钟刷新一次负荷曲线 and 日最大负荷 and 月能耗棒图 and 日最大需量 and 日能耗值
+				loadFhChart();
+				loadDnChart();
+				setInterval(function() {
+					loadFhChart();
+					loadDnChart();
+					getDayEnergyUse();
+				}, 300 * 1000);
+
+				//15分钟刷新一次日最大需量
+				getDayMaxLoadDemand();
+				setInterval(function() {
+					getDayMaxLoadDemand();
+				}, 15 * 60 * 1000);
+
+				updateMonthMaxLoad();
+				loadEnergyData();
+				loadEnergyUseChart();
+				getMonthMaxLoadDemand();
+			});
+
+			function getDayMaxLoadDemand() {
+				$.post('/pcm/unit!getDayMaxLoadDemand.do', {
+					no: parent.getCurUnit()
+				}, function(result) {
+					if(result.success) {
+						$('#dayMaxDemand').text(parseInt(result.data));
+
+						//更新月最大需量
+						if(result.data > lastMonthMaxDemand) {
+							lastMonthMaxDemand = result.data;
+							$('#monthMaxDemand').text(parseInt(lastMonthMaxDemand));
+						}
+					} else {
+						console.error(result.msg);
+					}
+				});
+			}
+
+			function getMonthMaxLoadDemand() {
+				$.post('/pcm/unit!getMonthMaxLoadDemand.do', {
+					no: parent.getCurUnit()
+				}, function(result) {
+					if(result.success) {
+						lastMonthMaxDemand = result.data;
+						$('#monthMaxDemand').text(parseInt(lastMonthMaxDemand));
+					} else {
+						console.error(result.msg);
+					}
+				});
+			}
+
+			function loadUnitInfo() {
+				$.ajax({
+					type: "post",
+					url: "/pcm/UsePowerUnit!get.do",
+					data: {
+						id: parent.getCurUnit()
+					},
+					async: false,
+					success: function(result) {
+						if(result.success) {
+							$('#unitname').text(isNullOrEmpty(result.data.fullname) ? result.data.name : result.data.fullname);
+							$('#address').text(result.data.address ? result.data.address : '--');
+							$('#leader').text(result.data.leader ? (result.data.leader + (result.data.phonenum ? ' ({0})'.format(result.data.phonenum) : '')) : '--');
+							if(result.data.jointime && result.data.jointime != "Jan 1, 0001 12:00:00 AM") {
+								var jointime = new Date(result.data.jointime);
+								$('#jointime').text(jointime.format('yyyy-MM-dd'));
+								var runday = Math.floor((new Date() - jointime) / (24 * 3600 * 1000));
+								$('#runtime').text(runday + "天");
+								$('#safeRunTime').text(runday);
+							} else {
+								$('#jointime').text('--');
+								$('#runtime').text('--');
+								$('#safeRunTime').text('--');
+							}
+							$('#expirationtime').text(result.data.expirationtime && result.data.jointime != "Jan 1, 0001 12:00:00 AM" ? new Date(result.data.expirationtime).format('yyyy-MM-dd') : '--');
+							$('#roomcount').text(result.data.roomcount == 0 ? '--' : result.data.roomcount);
+							$('#transformercount').text(result.data.transformercount == 0 ? '--' : result.data.transformercount);
+							loadcapacity = result.data.loadcapacity < 1 ? 10000 : result.data.loadcapacity;
+							$('#loadcapacity').text(loadcapacity);
+						} else {
+							console.error(result.msg);
+						}
+					}
+				});
+				$.post('/pcm/UsePowerUnit!getUnitEvents.do', { unitno: parent.getCurUnit() }, function(result) {
+					if(result.success) {
+						$('#alarmCount').text(result.alarmCount);
+						$('#yjCount').text(result.yjCount);
+						$('#gjCount').text(result.gjCount);
+					} else {
+						console.error(result.msg);
+					}
+				});
+				$.post('/pcm/UsePowerUnit!getDwInfo.do', { unitno: parent.getCurUnit() }, function(result) {
+					if(result.success) {
+						if(result['finishCount'])
+							$('#finishCount ').text(result['finishCount']);
+						if(result['plantCount'])
+							$('#plantCount ').text(result['plantCount']);
+						if(result['monthRepairCount'])
+							$('#monthRepairCount ').text(result['monthRepairCount']);
+						if(result['lastYearMonthRepairCount']) {
+							$('#lastYearMonthRepairCount ').text(result['lastYearMonthRepairCount']);
+							var percent = ((result['monthRepairCount'] - result['lastYearMonthRepairCount']) / result['lastYearMonthRepairCount'] * 100).toFixed(1);
+							setPercent('lastYearPercent', percent);
+						}
+						if(result['lastMonthRepairCount']) {
+							$('#lastMonthRepairCount ').text(result['lastMonthRepairCount']);
+							var percent = ((result['monthRepairCount'] - result['lastMonthRepairCount']) / result['lastMonthRepairCount'] * 100).toFixed(1);
+							setPercent('lastMonthPercent', percent);
+						}
+					} else {
+						console.error(result.msg);
+					}
+				});
+			}
+
+			function updateRtLoad() {
+				$.post('/pcm/unit!getRtLoadValue.do', {
+					no: parent.getCurUnit(),
+					link: parent.getLink()
+				}, function(result) {
+					var value = result.success ? result.data : 0;
+					$('#rtLoad').text('{0}'.format(parseInt(value)));
+					if(loadcapacity) {
+						var percent = parseInt(value / loadcapacity * 100);
+						$('#rtLoadPercent').text(percent + "%");
+						if(lastLoadPercent != percent) {
+							lastLoadPercent = percent;
+							loadPercentChart('divRTChart', '实时负荷', loadcapacity, value);
+						}
+					}
+
+					if(value > lastMaxDayLoad) {
+						$('#maxDayLoad').text(parseInt(value));
+						if(loadcapacity) {
+							var percent = parseInt(value / loadcapacity * 100);
+							$('#maxDayLoadPercent').text(percent + "%");
+							if(lastMaxDayLoad != value) {
+								lastMaxDayLoad = value;
+								loadPercentChart('divDMChart', '日最大负荷', loadcapacity, value);
+							}
+						}
+					}
+
+					if(value > lastMaxMonLoad) {
+						$('#maxMonLoad').text(parseInt(value));
+						if(loadcapacity) {
+							var percent = parseInt(value / loadcapacity * 100);
+							$('#maxMonLoadPercent').text(percent + "%");
+							if(lastMaxMonLoad != value) {
+								lastMaxMonLoad = value;
+								loadPercentChart('divMMChart', '月最大负荷', loadcapacity, value);
+							}
+						}
+					}
+				});
+			}
+
+			function updateMonthMaxLoad() {
+				$.post('/pcm/unit!getMonthMaxLoadValue.do', {
+					no: parent.getCurUnit()
+				}, function(result) {
+					var value = result.success ? result.data : 0;
+					$('#maxMonLoad').text(parseInt(value));
+					if(loadcapacity) {
+						var percent = parseInt(value / loadcapacity * 100);
+						$('#maxMonLoadPercent').text(percent + "%");
+						if(lastMaxMonLoad != value) {
+							lastMaxMonLoad = value;
+							loadPercentChart('divMMChart', '月最大负荷', loadcapacity, value);
+						}
+					}
+				});
+			}
+
+			function getDayEnergyUse() {
+				$.post('/pcm/unit!getDayEnergyValue.do', {
+					no: parent.getCurUnit()
+				}, function(result) {
+					if(result.success) {
+						var dvalue = result.data - dayEnergyUse; //差值
+						dayEnergyUse = result.data;
+						monthEnergyUse += dvalue;
+						yearEnergyUse += dvalue;
+						refreshEnergyUI();
+					} else {
+						console.error(result.msg);
+					}
+				});
+			}
+
+			var dayEnergyUse;
+            var monthEnergyUse;
+            var yearEnergyUse;
+            var lastDayValue;
+            var lastMonthDayValue;
+            var lastMonthValue;
+            var lastYearMonthValue;
+
+			function loadEnergyData() {
+				$.post('/pcm/unit!loadHisEnergyData.do', {
+					no: parent.getCurUnit(),
+					dateType: '日'
+				}, function(result) {
+					if(result.success) {
+						lastDayValue = result.lastDayValue;
+						lastMonthDayValue = result.lastMonthDayValue;
+						dayEnergyUse = result.dayValue;
+						refreshEnergyUI();
+					} else {
+						console.error(result.msg);
+					}
+				});
+				$.post('/pcm/unit!loadHisEnergyData.do', {
+					no: parent.getCurUnit(),
+					dateType: '月'
+				}, function(result) {
+					if(result.success) {
+						lastMonthValue = result.lastMonthValue;
+						lastYearMonthValue = result.lastYearMonthValue;
+						monthEnergyUse = result.monthValue;
+						refreshEnergyUI();
+					} else {
+						console.error(result.msg);
+					}
+				});
+				$.post('/pcm/unit!loadHisEnergyData.do', {
+					no: parent.getCurUnit(),
+					dateType: '年'
+				}, function(result) {
+					if(result.success) {
+						yearEnergyUse = result.yearValue;
+						refreshEnergyUI();
+					} else {
+						console.error(result.msg);
+					}
+				});
+			}
+
+			function refreshEnergyUI() {
+				if(yearEnergyUse && yearEnergyUse > 0)
+					$('#yearValue').text(parseInt(yearEnergyUse));
+				if(dayEnergyUse && dayEnergyUse > 0)
+					$('#dayValue').text(parseInt(dayEnergyUse) + "");
+				if(lastMonthDayValue && lastMonthDayValue > 0)
+					$('#lastMonthDayValue').text(parseInt(lastMonthDayValue) + "");
+				if(lastDayValue && lastDayValue > 0)
+					$('#lastDayValue').text(parseInt(lastDayValue) + "");
+				if(monthEnergyUse && monthEnergyUse > 0)
+					$('#monthValue').text(parseInt(monthEnergyUse) + "");
+				if(lastYearMonthValue && lastYearMonthValue > 0)
+					$('#lastYearMonthValue').text(parseInt(lastYearMonthValue) + "");
+				if(lastMonthValue && lastMonthValue > 0)
+					$('#lastMonthValue').text(parseInt(lastMonthValue) + "");
+
+				var percent;
+				if(lastMonthDayValue && lastMonthDayValue > 0) {
+					percent = ((dayEnergyUse - lastMonthDayValue) / lastMonthDayValue * 100).toFixed(1);
+					setPercent('lastMonthDayValuePercent', percent);
+				}
+
+				if(lastDayValue && lastDayValue > 0) {
+					percent = ((dayEnergyUse - lastDayValue) / lastDayValue * 100).toFixed(1);
+					setPercent('lastDayValuePercent', percent);
+				}
+
+				if(lastYearMonthValue && lastYearMonthValue > 0) {
+					percent = ((monthEnergyUse - lastYearMonthValue) / lastYearMonthValue * 100).toFixed(1);
+					setPercent('lastYearMonthValuePercent', percent);
+				}
+
+				if(lastMonthValue && lastMonthValue > 0) {
+					percent = ((monthEnergyUse - lastMonthValue) / lastMonthValue * 100).toFixed(1);
+					setPercent('lastMonthValuePercent', percent);
+				}
+			}
+
+			function setPercent(id, percent) {
+				$('#' + id).empty();
+				$('#' + id).append('<img src="../../resources/css/Images/OperationsCenter/{0}">{1}%'.format(percent > 0 ? 'up.png' : 'down.png', Math.abs(percent)));
+			}
+
+			function loadFhChart() {
+				$.post('/pcm/unit!loadDayFhChart.do', {
+					no: parent.getCurUnit()
+				}, function(result) {
+					if(result.success) {
+						new Highcharts.Chart({
+							plotOptions: {
+								spline: {
+									marker: {
+										enabled: false
+									}
+								}
+							},
+							chart: {
+								renderTo: 'container_fh',
+							},
+							title: {
+								text: '',
+							},
+							subtitle: {
+								text: '当前负荷：0kW',
+								floating: true,
+								style: {
+									color: '#FFFFFF',
+									fontWeight: 'bold'
+								}
+							},
+							xAxis: {
+								type: 'datetime',
+								labels: {
+									formatter: function() {
+										return HighChart.xAxisFormat('日', this.value);
+									}
+								},
+							},
+							yAxis: {
+								title: {
+									text: '负荷值(kW)'
+								}
+							},
+							tooltip: {
+								formatter: function() {
+									return '<b>' + this.series.name + '：' + Highcharts.numberFormat(this.y, 2) + 'kW</b><br/>' +
+										HighChart.tooltipFormat('时', this.x);
+								}
+							},
+							legend: {
+								layout: 'vertical',
+								align: 'right',
+								verticalAlign: 'middle',
+							},
+							credits: {
+								enabled: false
+							},
+							series: HighChart.sort(result.data)
+						});
+
+					} else {
+						console.error(result.msg);
+					}
+					var value = result.success ? result.maxvalue : 0;
+					$('#maxDayLoad').text(parseInt(value));
+					if(loadcapacity) {
+						var percent = parseInt(value / loadcapacity * 100);
+						$('#maxDayLoadPercent').text(percent + "%");
+						if(lastMaxDayLoad != value) {
+							lastMaxDayLoad = value;
+							loadPercentChart('divDMChart', '日最大负荷', loadcapacity, value);
+						}
+					}
+				});
+			}
+
+			function loadDnChart() {
+				$.post('/pcm/unit!loadMonthDlChart.do', {
+					no: parent.getCurUnit()
+				}, function(result) {
+					if(result.success) {
+						new Highcharts.Chart({
+							plotOptions: {
+								spline: {
+									marker: {
+										enabled: false
+									}
+								}
+							},
+							chart: {
+								renderTo: 'container_dl',
+								type: 'column'
+							},
+							title: {
+								text: ''
+							},
+							xAxis: {
+								type: 'datetime',
+								labels: {
+									formatter: function() {
+										return HighChart.xAxisFormat('月', this.value);
+									}
+								},
+							},
+							yAxis: {
+								title: {
+									text: '能耗值(kWh)'
+								}
+							},
+							tooltip: {
+								formatter: function() {
+									return '<b>' + this.series.name + Highcharts.dateFormat('%d', this.x) + '日：' + Highcharts.numberFormat(this.y, 2) + 'kWh</b>';
+								}
+							},
+							credits: {
+								enabled: false
+							},
+							series: HighChart.sort(result.data)
+						});
+					} else {
+						console.error(result.msg);
+					}
+				});
+			}
+
+			function loadPercentChart(chartId, name, max, value) {
+				if(value > max) value = max;
+				$('#' + chartId).highcharts({
+					chart: {
+						type: 'pie',
+					},
+					title: {
+						text: '',
+						verticalAlign: 'middle',
+					},
+					tooltip: {
+						pointFormat: '<b>{point.percentage:.2f}%</b>'
+					},
+					plotOptions: {
+						pie: {
+							size: 80,
+							innerSize: 60,
+							dataLabels: {
+								enabled: false,
+							},
+							colors: ['#E0E0E0', '#00BAFF'],
+						}
+					},
+					credits: {
+						enabled: false
+					},
+					series: [{
+						data: [
+							['', max - value],
+							[name, value]
+						]
+					}]
+				});
+			}
+
+			function loadEnergyUseChart() {
+				$.post('/pcm/unit!loadEnergyUseTop.do', {
+					no: parent.getCurUnit()
+				}, function(result) {
+					if(result.success) {
+						loadTopChart('energyUseTop5', result.categories, result.series, '月用电量TOP5', ['#1FBE44', '#3DCC4A', '#59D040', '#81DB54', '#98E175'], 'kWh');
+						loadTopChart('energyAddTop5', result.perCategories, result.perSeries, '月用电增幅TOP5', ['#FF7800', '#FB8924', '#FAA02B', '#FFB643', '#FFC954'], '%');
+					} else {
+						console.error(result.msg);
+					}
+				});
+			}
+
+			function loadTopChart(chartId, categories, series, title, colors, unit) {
+				$('#' + chartId).highcharts({
+					chart: {
+						type: 'bar'
+					},
+					title: {
+						text: title
+					},
+					xAxis: {
+						categories: categories,
+						lineColor: '#FFFFFF', //设置为白色
+						tickWidth: 0, //刻度标签宽度
+					},
+					yAxis: {
+						min: 0,
+						title: {
+							text: ''
+						},
+						labels: {
+							enabled: false
+						},
+						gridLineWidth: 0
+					},
+					legend: {
+						enabled: false,
+					},
+					plotOptions: {
+						bar: {
+							dataLabels: {
+								enabled: true,
+								formatter: function() {
+									return this.y + unit;
+								},
+							}
+						},
+						series: {
+							colorByPoint: true,
+							colors: colors
+						}
+					},
+					credits: {
+						enabled: false
+					},
+					series: series
+				});
+			}
+
+			/**
+			 * 加载事件统计信息
+			 */
+			loadEventStatistic = function() {
+				$.post('/pcm/event!statistic.do', {
+					unitno: Cookies.get("curUnit"),
+					eventTypes: 'gfhbj,gwbj,slbj,qtbj'
+				}, function(result) {
+					if(result.success) {
+						var data = result.data;
+						$('#eventTotal').text(data['total']);
+						var serie = {};
+						serie.name = '类型占比';
+						serie.data = [];
+						$('#gfhbj').text(data['gfhbj']);
+						serie.data.add(['过负荷告警', data['gfhbj']]);
+						$('#gwbj').text(data['gwbj']);
+						serie.data.add(['高温告警', data['gwbj']]);
+						$('#slbj').text(data['slbj']);
+						serie.data.add(['剩余电流告警', data['slbj']]);
+						$('#qtbj').text(data['qtbj']);
+						serie.data.add(['其他告警', data['qtbj']]);
+						//						$('#qtbj').text(data['gzbj']);
+						//						serie.data.add(['其他告警', data['gzbj']]);
+						$('#eventPie').ichart('loadPieChart', {
+							title: '隐患类型占比分析',
+							showInLegend: true,
+							series: [serie]
+						});
+					} else {
+						console.error(result.msg);
+					}
+				});
+			}
+		</script>
+	</head>
+
+	<body>
+		<div class="easyui-layout" data-options="fit:true">
+			<div class="centerpane" data-options="region:'center'" style="overflow-y: auto;">
+				<div style="float: left; width: 42.5%;height: 250px;margin-top:30px;margin-left:6.5%;outline:2px solid #15C162;background-color: #ffffff;">
+					<div style="float: left;width: 100%;height: 25%;">
+						<div id="unitname" style="width: 100%;font-size: 25px;text-align: center;color: #009844;margin-top: 15px;"></div>
+					</div>
+					<div style="float: left;width: 22%;height: 10%;margin-left: 5%;background-color: #D8F8DD;">
+						<img src="../../resources/css/Images/UsePowerUnit/d1_07.png" / height="100%" style="float: left;">
+						<div style="float: left;font-size: 15px;margin-left: 3px; margin-top: 3px;">地址</div>
+					</div>
+					<div style="float: left;width: 67.9%;height: 10%;margin-left: 0.1%;background-color: #D8F8DD;">
+						<div id="address" style="float: left;font-size: 15px;margin-left: 3px; margin-top: 3px;"></div>
+					</div>
+					<div style="float: left;width: 100%;height: 4%;"></div>
+					<div style="float: left;width: 22%;height: 10%;margin-left: 5%;background-color: #D8F8DD;">
+						<img src="../../resources/css/Images/UsePowerUnit/d1_10.png" / height="100%" style="float: left;">
+						<div style="float: left;font-size: 15px;margin-left: 3px; margin-top: 3px;">联系人</div>
+					</div>
+					<div style="float: left;width: 67.9%;height: 10%;margin-left: 0.1%;background-color: #D8F8DD;">
+						<div id="leader" style="float: left;font-size: 15px;margin-left: 3px; margin-top: 3px;"></div>
+					</div>
+					<div style="float: left;width: 100%;height: 4%;"></div>
+					<div style="float: left;width: 22%;height: 10%;margin-left: 5%;background-color: #D8F8DD;">
+						<img src="../../resources/css/Images/UsePowerUnit/d1_12.png" / height="100%" style="float: left;">
+						<div style="float: left;font-size: 15px;margin-left: 3px; margin-top: 3px;">接入时间</div>
+					</div>
+					<div style="float: left;width: 67.9%;height: 10%;margin-left: 0.1%;background-color: #D8F8DD;">
+						<div id="jointime" style="float: left;font-size: 15px;margin-left: 3px; margin-top: 3px;"></div>
+					</div>
+					<div style="float: left;width: 100%;height: 4%;"></div>
+					<div style="float: left;width: 22%;height: 10%;margin-left: 5%;background-color: #D8F8DD;">
+						<img src="../../resources/css/Images/UsePowerUnit/d1_14.png" / height="100%" style="float: left;">
+						<div style="float: left;font-size: 15px;margin-left: 3px; margin-top: 3px;">运行时间</div>
+					</div>
+					<div style="float: left;width: 67.9%;height: 10%;margin-left: 0.1%;background-color: #D8F8DD;">
+						<div id="runtime" style="float: left;font-size: 15px;margin-left: 3px; margin-top: 3px;"></div>
+					</div>
+					<div style="float: left;width: 100%;height: 4%;"></div>
+					<div style="float: left;width: 22%;height: 10%;margin-left: 5%;background-color: #D8F8DD;">
+						<img src="../../resources/css/Images/UsePowerUnit/d1_16.png" / height="100%" style="float: left;">
+						<div style="float: left;font-size: 15px;margin-left: 3px; margin-top: 3px;">合同到期</div>
+					</div>
+					<div style="float: left;width: 67.9%;height: 10%;margin-left: 0.1%;background-color: #D8F8DD;">
+						<div id="expirationtime" style="float: left;font-size: 15px;margin-left: 3px; margin-top: 3px;"></div>
+					</div>
+				</div>
+				<div style="float: left; width: 42.5%;height: 250px;margin-top:30px;margin-left:2%;outline:2px solid #FFAA45;background-color: #ffffff;">
+					<div style="float: left;width: 27%;height: 80%;margin-top: 5%;margin-left: 5%;">
+						<div style="float: left;font-size: 15px;text-align: center;">安全运行：<label id="safeRunTime" style="font-size: 20px;color: #FF8A00;">0</label> 天
+							<!--<div style="float: left; font-size: 15px;margin-top: 3px;margin-left: 10px;">安全运行时间：</div>-->
+							<!--<div id="safeRunTime" style="float: left; font-size: 20px;color: #FF8A00;margin-left: 10px;">0天</div>-->
+						</div>
+						<div style="float: left; height: 10px;width: 100%;"></div>
+						<div style="float: left;">
+							<div style="float: left;font-size: 15px;text-align: center;">运行状态：<label id="safeRunTime" style="font-size: 20px;color: #268FFF;">正常</label></div>
+							<!--<div style="float: left; font-size: 15px;margin-top: 3px;margin-left: 10px;">企业运行状态：</div>-->
+							<!--<div style="float: left; font-size: 20px;color: #268FFF;margin-left: 10px;">正常</div>-->
+						</div>
+						<div style="float: left; height: 30px;width: 100%;"></div>
+						<div style="float: left;width: 100%;height: 25%;background-color: #FFF0DE;">
+							<div id="alarmCount" class="valuepane" style="color: #FF8A00;">0</div>
+							<div class="textpane">当前未处理告警数</div>
+						</div>
+						<div style="float: left; height: 1.5%;width: 100%;"></div>
+						<div style="float: left;width: 49%;height: 25%;background-color: #FFF0DE;">
+							<div id="yjCount" class="valuepane">0</div>
+							<div class="textpane">预警</div>
+						</div>
+						<div style="float: left;width: 49%;height: 25%;background-color: #FFF0DE;margin-left: 2%;">
+							<div id="gjCount" class="valuepane">0</div>
+							<div class="textpane">告警</div>
+						</div>
+					</div>
+					<div style="float: left;width: 57%;height: 80%;margin-top: 5%;margin-left: 6%;">
+						<div style="float: left;width: 80%;height: 30%;margin-left: 10%; ">
+							<div style="float: left;width: 100%;">
+								<div style="float: left;width: 45%;">
+									<div class="valuepane" style="margin-top: 0px;color: #FF8A00;" id="finishCount">0</div>
+									<div class="textpane" style="margin-top: -4px;">已经完成巡检数</div>
+								</div>
+								<div style="float: left;width: 10%;font-size: 30px;text-align: center;">/</div>
+								<div style="float: left;width: 45%;">
+									<div class="valuepane" style="margin-top: 0px;color: #848484;" id="plantCount">0</div>
+									<div class="textpane" style="margin-top: -4px;">本月计划巡检数</div>
+								</div>
+							</div>
+							<div style="float: left;width: 100%;height: 20px;margin-top: 5px;">
+								<div style="float: left;width: 50%;height: 100%;background-color: #FF8A00;"></div>
+								<div style="float: left;width: 0.5%;height: 100%;"></div>
+								<div style="float: left;width: 49.5%;height: 100%;background-color: #E0E0E0;"></div>
+							</div>
+						</div>
+						<div style="float: left;width: 100%;height: 51.5%; margin-top: 26px;">
+							<div style="float: left;width: 27%;height: 100%;background-color: #E0EFFF;">
+								<div class="valuepane" style="margin-top: 25px;color: #FF8A00;" id="monthRepairCount">0</div>
+								<div class="textpane" style="margin-top: 5px;">本月抢险数</div>
+							</div>
+							<div style="float: left;width: 71%;height: 100%;">
+								<div style="float: left;width: 10%;height: 49%;background-color: #FFF0DE;margin-left: 2%;">
+									<div style="width: 100%;height: 50%;font-size: 15px;text-align: center;margin-top: 8px;">同<br />比</div>
+								</div>
+								<div style="float: left;width: 43%;height: 49%;background-color: #e0efff;margin-left: 1%;">
+									<div style="width: 100%;font-size: 18px;text-align: center;margin-top: 8px;" id="lastYearMonthRepairCount">0</div>
+									<div class="textpane">去年同月次数</div>
+								</div>
+								<div style="float: left;width: 43%;height: 49%;background-color: #e0efff;margin-left: 1%;">
+									<div style="width: 100%;font-size: 18px;text-align: center;margin-top: 8px;" id="lastYearPercent"><img src="../../resources/css/Images/OperationsCenter/down.png">0%</div>
+									<div class="textpane">去年同期相比</div>
+								</div>
+								<div style="float: left;width: 100%;height: 2%;"></div>
+								<div style="float: left;width: 10%;height: 49%;background-color: #FFF0DE;margin-left: 2%;">
+									<div style="width: 100%;height: 50%;font-size: 15px;text-align: center;margin-top: 8px;">环<br />比</div>
+								</div>
+								<div style="float: left;width: 43%;height: 49%;background-color: #e0efff;margin-left: 1%;">
+									<div style="width: 100%;font-size: 18px;text-align: center;margin-top: 8px;" id="lastMonthRepairCount">0</div>
+									<div class="textpane">上月次数</div>
+								</div>
+								<div style="float: left;width: 43%;height: 49%;background-color: #e0efff;margin-left: 1%;">
+									<div style="width: 100%;font-size: 18px;text-align: center;margin-top: 8px;" id="lastMonthPercent"><img src="../../resources/css/Images/OperationsCenter/up.png">0%</div>
+									<div class="textpane">上月相比</div>
+								</div>
+							</div>
+						</div>
+					</div>
+				</div>
+				<div style="float: left; width: 87%;height: 220px;margin-top:30px;margin-left:6.5%;outline:2px solid #00CCFF;background-color: #ffffff;">
+					<div style="float: left;width: 45%;height: 100%;">
+						<div style="float: left;width: 100%;height: 8%;"></div>
+						<div style="float: left;width: 90%;height: 20%;margin-left: 5%;">
+							<div style="float: left;width: 25%;height: 100%;background-color: #E0EFFF;">
+								<div id="roomcount" class="valuepane">0</div>
+								<div class="textpane">配电房数量</div>
+							</div>
+							<div style="float: left;width: 74%;height: 100%;background-color: #E0EFFF;margin-left: 1%;">
+								<div style="float: left;width: 33%;margin-top: 0px;">
+									<div id="transformercount" class="valuepane">0</div>
+									<div class="textpane">变压器数量</div>
+								</div>
+								<div style="float: left;width: 33%;margin-top: 0px;">
+									<div id="dayMaxDemand" class="valuepane">--</div>
+									<div class="textpane">日最大需量(kW)</div>
+								</div>
+								<div style="float: left;width: 33%;margin-top: 0px;">
+									<div id="monthMaxDemand" class="valuepane">--</div>
+									<div class="textpane">月最大需量(kW)</div>
+								</div>
+							</div>
+						</div>
+						<div style="float: left;width: 100%;height: 4%;"></div>
+						<div style="float: left;width: 90%;height: 60%;margin-left: 5%; background-color: #E0EFFF;">
+							<div style="float: left;width: 25%;height: 100%;">
+								<div id="loadcapacity" class="valuepane" style="color: #00A8FF;font-size: 30px;margin-top: 30px;margin-bottom: 5px;">
+									10000
+								</div>
+								<div class="textpane">
+									负荷容量(kW)
+								</div>
+							</div>
+							<div style="float: left;width: 74%;height: 100%;">
+								<div style="float: left;width: 100%;height: 4%;"></div>
+								<div style="float: left;width: 100%;height: 92%;background-color: #FFFFFF;">
+									<div style="float: left;width: 33%;height: 100%;margin-left: 1%;">
+										<div style="float: left;width: 100%;height: 75%;position: relative;">
+											<div id="rtLoadPercent" style="position: absolute;text-align: center;color: #00BAFF;font-size: 25px;width: 100%;top: 20%;">0%</div>
+											<div style="position: absolute;text-align: center;font-size: 13px;width: 100%;top: 50%;">负荷率</div>
+											<div id="divRTChart" style="position: absolute;width: 100%;height: 100%;"></div>
+										</div>
+										<div id="rtLoad" class="valuepane" style="float: left;width: 100%;height: 15%;margin-top: -10px;color: #FF8A00;">0</div>
+										<div class="textpane" style="float: left;width: 100%;height: 10%;margin-top: 3px;">实时负荷(kW)</div>
+									</div>
+									<div style="float: left;width: 33%;height: 100%;">
+										<div style="float: left;width: 100%;height: 75%;position: relative;">
+											<div id="maxDayLoadPercent" style="position: absolute;text-align: center;color: #00BAFF;font-size: 25px;width: 100%;top: 20%;">0%</div>
+											<div style="position: absolute;text-align: center;font-size: 13px;width: 100%;top: 50%;">负荷率</div>
+											<div id="divDMChart" style="position: absolute;width: 100%;height: 100%;"></div>
+										</div>
+										<div id="maxDayLoad" class="valuepane" style="float: left;width: 100%;height: 15%;margin-top: -10px;color: #FF8A00;">0</div>
+										<div class="textpane" style="float: left;width: 100%;height: 10%;margin-top: 3px;">本日最大值(kW)</div>
+									</div>
+									<div style="float: left;width: 33%;height: 100%;">
+										<div style="float: left;width: 100%;height: 75%;position: relative;">
+											<div id="maxMonLoadPercent" style="position: absolute;text-align: center;color: #00BAFF;font-size: 25px;width: 100%;top: 20%;">0%</div>
+											<div style="position: absolute;text-align: center;font-size: 13px;width: 100%;top: 50%;">负荷率</div>
+											<div id="divMMChart" style="position: absolute;width: 100%;height: 100%;"></div>
+										</div>
+										<div id="maxMonLoad" class="valuepane" style="float: left;width: 100%;height: 15%;margin-top: -10px;color: #FF8A00;">0</div>
+										<div class="textpane" style="float: left;width: 100%;height: 10%;margin-top: 3px;">本月最大值(kW)</div>
+									</div>
+								</div>
+							</div>
+						</div>
+						<div style="float: left;width: 100%;height: 8%;"></div>
+					</div>
+					<div style="float: left;width: 55%;height: 100%;">
+						<div style="float: left;width: 100%;height: 8%;"></div>
+						<div id="container_fh" style="float: left; width: 97%;height: 84%;"></div>
+					</div>
+				</div>
+				<div style="float: left; width: 87%;height: 400px;margin-top:30px;margin-left:6.5%;outline:2px solid #FF6F6F;background-color: #ffffff;">
+					<div style="float: left;width: 60%;height: 100%;">
+						<div style="float:left;width: 100%;height: 50%;">
+							<div style="float: left;width: 100%;height: 15px;"></div>
+							<div style="float: left;width: 93%;height: 50px;margin-left: 3.5%; background-color: #E0EFFF;">
+								<div style="float: left;width: 48%;font-size: 15px;text-align: right;margin-top: 18px;">今年用电量</div>
+								<div id="yearValue" style="float: left;font-size: 25px;margin-top: 10px;margin-left: 5px; color: #FC3A3A;">0</div>
+								<div style="float: left;font-size: 15px;margin-top: 18px;margin-left: 2px;">(单位 kWh)</div>
+							</div>
+							<div style="float: left;width: 100%;height: 10px;"></div>
+							<div style="float: left;width: 93%;height: 110px;margin-left: 3.5%;">
+								<div style="float: left;width: 49%;height: 100%;">
+									<div style="float: left;width: 27%;height: 100%;background-color: #E0EFFF;">
+										<div id="dayValue" class="valuepane" style="margin-top: 25px;color: #FC3A3A;">0</div>
+										<div class="textpane" style="margin-top: 5px;">今日用电量</div>
+									</div>
+									<div style="float: left;width: 73%;height: 100%;">
+										<div style="float: left;width: 10%;height: 49%;background-color: #FFF0DE;margin-left: 2%;">
+											<div style="width: 100%;height: 50%;font-size: 15px;text-align: center;margin-top: 8px;">同<br />比</div>
+										</div>
+										<div style="float: left;width: 43%;height: 49%;background-color: #e0efff;margin-left: 1%;">
+											<div id="lastMonthDayValue" style="width: 100%;font-size: 18px;text-align: center;margin-top: 8px;">0</div>
+											<div class="textpane">上月同期电量</div>
+										</div>
+										<div style="float: left;width: 43%;height: 49%;background-color: #e0efff;margin-left: 1%;">
+											<!--<div id="lastMonthDayValuePersion" style="width: 100%;font-size: 18px;text-align: center;margin-top: 8px;"><img src="../../resources/css/Images/OperationsCenter/up.png">10%</div>-->
+											<div id="lastMonthDayValuePercent" style="width: 100%;font-size: 18px;text-align: center;margin-top: 8px;">0%</div>
+											<div class="textpane">上月同期相比</div>
+										</div>
+										<div style="float: left;width: 100%;height: 2%;"></div>
+										<div style="float: left;width: 10%;height: 49%;background-color: #FFF0DE;margin-left: 2%;">
+											<div style="width: 100%;height: 50%;font-size: 15px;text-align: center;margin-top: 8px;">环<br />比</div>
+										</div>
+										<div style="float: left;width: 43%;height: 49%;background-color: #e0efff;margin-left: 1%;">
+											<div id="lastDayValue" style="width: 100%;font-size: 18px;text-align: center;margin-top: 8px;">0</div>
+											<div class="textpane">昨日同期电量</div>
+										</div>
+										<div style="float: left;width: 43%;height: 49%;background-color: #e0efff;margin-left: 1%;">
+											<!--<div style="width: 100%;font-size: 18px;text-align: center;margin-top: 8px;"><img src="../../resources/css/Images/OperationsCenter/down.png">10%</div>-->
+											<div id="lastDayValuePercent" style="width: 100%;font-size: 18px;text-align: center;margin-top: 8px;">0%</div>
+											<div class="textpane">昨日同期相比</div>
+										</div>
+									</div>
+								</div>
+								<div style="float: left;width: 49%;height: 100%;margin-left: 2%;">
+									<div style="float: left;width: 27%;height: 100%;background-color: #E0EFFF;">
+										<div id="monthValue" class="valuepane" style="margin-top: 25px;color: #FC3A3A;">0</div>
+										<div class="textpane" style="margin-top: 5px;">本月用电量</div>
+									</div>
+									<div style="float: left;width: 73%;height: 100%;">
+										<div style="float: left;width: 10%;height: 49%;background-color: #FFF0DE;margin-left: 2%;">
+											<div style="width: 100%;height: 50%;font-size: 15px;text-align: center;margin-top: 8px;">同<br />比</div>
+										</div>
+										<div style="float: left;width: 43%;height: 49%;background-color: #e0efff;margin-left: 1%;">
+											<div id="lastYearMonthValue" style="width: 100%;font-size: 18px;text-align: center;margin-top: 8px;">0</div>
+											<div class="textpane">上年同期电量</div>
+										</div>
+										<div style="float: left;width: 43%;height: 49%;background-color: #e0efff;margin-left: 1%;">
+											<!--<div style="width: 100%;font-size: 18px;text-align: center;margin-top: 8px;"><img src="../../resources/css/Images/OperationsCenter/up.png">10%</div>-->
+											<div id="lastYearMonthValuePercent" style="width: 100%;font-size: 18px;text-align: center;margin-top: 8px;">0%</div>
+											<div class="textpane">上年同期相比</div>
+										</div>
+										<div style="float: left;width: 100%;height: 2%;"></div>
+										<div style="float: left;width: 10%;height: 49%;background-color: #FFF0DE;margin-left: 2%;">
+											<div style="width: 100%;height: 50%;font-size: 15px;text-align: center;margin-top: 8px;">环<br />比</div>
+										</div>
+										<div style="float: left;width: 43%;height: 49%;background-color: #e0efff;margin-left: 1%;">
+											<div id="lastMonthValue" style="width: 100%;font-size: 18px;text-align: center;margin-top: 8px;">0</div>
+											<div class="textpane">上月同期电量</div>
+										</div>
+										<div style="float: left;width: 43%;height: 49%;background-color: #e0efff;margin-left: 1%;">
+											<!--<div id="lastMonthValuePercent" style="width: 100%;font-size: 18px;text-align: center;margin-top: 8px;"><img src="../../resources/css/Images/OperationsCenter/down.png">10%</div>-->
+											<div id="lastMonthValuePercent" style="width: 100%;font-size: 18px;text-align: center;margin-top: 8px;">0%</div>
+											<div class="textpane">上月同期相比</div>
+										</div>
+									</div>
+								</div>
+							</div>
+						</div>
+						<div style="float:left;width: 100%;height: 50%;">
+							<div id="container_dl" style="float: left;width: 93%;height: 185px;margin-left: 3.5%;"></div>
+						</div>
+					</div>
+					<div style="float: left;width: 40%;height: 100%;">
+						<div style="float: left;width: 100%;height: 50%;">
+							<div id="energyUseTop5" style="width: 90%;height: 90%;margin-left: 10%;margin-top: 10px;"></div>
+						</div>
+						<div style="float: left;width: 100%;height: 50%;">
+							<div id="energyAddTop5" style="width: 90%;height: 90%;margin-left: 10%;margin-top: 10px;"></div>
+						</div>
+					</div>
+				</div>
+				<div style="float: left;width: 100%;height: 20px;"></div>
+			</div>
+		</div>
+	</body>
+
+</html>
